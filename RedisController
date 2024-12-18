@@ -1,0 +1,37 @@
+import { Controller, Get, Post, Delete, Body, Query } from '@nestjs/common';
+import { RedisService } from './redis.service';
+
+@Controller('redis')
+export class RedisController {
+  constructor(private readonly redisService: RedisService) {}
+
+  @Post('bulk-insert')
+  async bulkInsert(@Body() data: Record<string, string>[]) {
+    return this.redisService.bulkInsert(data);
+  }
+
+  @Post('bulk-update')
+  async bulkUpdate(@Body() data: Record<string, string>[]) {
+    return this.redisService.bulkUpdate(data);
+  }
+
+  @Get('filter')
+  async filter(@Query('pattern') pattern: string) {
+    return this.redisService.filter(pattern);
+  }
+
+  @Get('sort')
+  async sort(@Query('setName') setName: string, @Query('order') order: 'ASC' | 'DESC') {
+    return this.redisService.sort(setName, order);
+  }
+
+  @Delete('delete')
+  async delete(@Query('key') key: string) {
+    return this.redisService.delete(key);
+  }
+
+  @Delete('multiple-delete')
+  async multipleDelete(@Body() keys: string[]) {
+    return this.redisService.multipleDelete(keys);
+  }
+}
