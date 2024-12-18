@@ -1,0 +1,73 @@
+import { Injectable } from '@nestjs/common';
+import { createClient, RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+  private client: RedisClientType;
+
+  constructor() {
+    this.client = createClient({
+      url: 'redis://localhost:6379', // Update with your Redis URL
+    });
+
+    this.client.connect().catch((err) => {
+      console.error('Redis connection error:', err);
+    });
+  }
+
+  // Filter data based on pattern
+  async filter(pattern: string): Promise<string[]> {
+    const keys = [];
+    const stream = this.client.scanIterator({ MATCH: pattern });
+    for await (const key of stream) {
+      keys.push(key);
+    }
+    return keys;
+  }
+
+  // Sort data using sorted sets
+  async sort(setName: string, order: 'ASC' | 'DESC' = 'ASC'): Promise<string[]> {
+    return this.client.zRange(setName, 0, -1, { REV: order === 'DESC' });
+  }
+
+  // Bulk insert
+  async bulkInsert(data: Record<string, string>[]): Promise<void> {
+    const pipeline = this.client.multi();
+    for (const item of data) {
+      for (const [key, value] of Object.entries(item)) {
+        pipeline.set(key, value);
+      }
+    }
+    await pipeline.exec();
+  }
+
+  // Bulk update
+  async bulkUpdate(data: Record<string, string>[]): Promise<void> {
+    const pipeline = this.client.multi();
+    for (const item of data) {
+      for (const [key, value] of Object.entries(item)) {
+        pipeline.set(key, value); // Update existing keys
+      }
+    }
+    await pipeline.exec();
+  }
+
+  // Delete a single key
+  async delete(key: string): Promise<void> {
+    await this.client.del(key);
+  }
+
+  // Delete multiple keys
+  async multipleDelete(keys: string[]): Promise<void> {
+    const pipeline = this.client.multi();
+    for (const key of keys) {
+      pipeline.del(key);
+    }
+    await pipeline.exec();
+  }
+
+  // Gracefully close the connection
+  async onModuleDestroy() {
+    await this.client.quit();
+  }
+}
