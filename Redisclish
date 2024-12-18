@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# Connect to Redis (default localhost:6379)
+echo "Testing Redis with Dummy Data..."
+
+# Flush the database to start fresh
+echo "Flushing database..."
+redis-cli FLUSHDB
+
+# Bulk Insert
+echo "Inserting dummy data..."
+redis-cli SET user:1:name "Alice"
+redis-cli SET user:1:age "30"
+redis-cli SET user:1:score "50"
+redis-cli SET user:2:name "Bob"
+redis-cli SET user:2:age "25"
+redis-cli SET user:2:score "70"
+redis-cli SET user:3:name "Charlie"
+redis-cli SET user:3:age "35"
+redis-cli SET user:3:score "60"
+
+# Add to a sorted set
+echo "Adding to sorted set..."
+redis-cli ZADD scores 50 "user:1" 70 "user:2" 60 "user:3"
+
+# Filter keys
+echo "Filtering keys with pattern 'user:*:name'..."
+redis-cli SCAN 0 MATCH user:*:name
+
+# Retrieve specific data
+echo "Fetching individual values..."
+redis-cli GET user:1:name
+redis-cli GET user:2:score
+
+# Sort data
+echo "Sorting scores in ascending order..."
+redis-cli ZRANGE scores 0 -1 WITHSCORES
+
+echo "Sorting scores in descending order..."
+redis-cli ZREVRANGE scores 0 -1 WITHSCORES
+
+# Update a key
+echo "Updating user:1:score..."
+redis-cli SET user:1:score "55"
+redis-cli GET user:1:score
+
+# Bulk Delete
+echo "Deleting keys user:1:age, user:2:age, user:3:age..."
+redis-cli DEL user:1:age user:2:age user:3:age
+
+# Verify deletion
+echo "Checking existence of deleted keys..."
+redis-cli EXISTS user:1:age
+redis-cli EXISTS user:2:age
+
+# List all keys
+echo "Listing all keys in the database..."
+redis-cli SCAN 0
+
+# Clear all data
+echo "Clearing all data from the database..."
+redis-cli FLUSHDB
+
+echo "Test completed!"
