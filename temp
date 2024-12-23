@@ -1,0 +1,20 @@
+# Start a transaction
+MULTI
+HMSET store:products:Item-1 artist "Alice Brown" price 15.99 name "Elegant Vase" description "A beautiful vase for home decor" manufacturer HomeDeco itemType vase productImg vase-001.jpg
+SADD store:all-products Item-1
+
+HMSET store:products:Item-2 artist "Bob Smith" price 12.49 name "Stylish Lamp" description "A modern lamp to brighten your space" manufacturer LightHouse itemType lamp productImg lamp-002.jpg
+SADD store:all-products Item-2
+
+HMSET store:products:Item-3 artist "Clara Johnson" price 8.99 name "Classic Plate" description "A timeless ceramic plate" manufacturer DishWorks itemType plate productImg plate-003.jpg
+SADD store:all-products Item-3
+
+HMSET store:products:Item-4 artist "David Lee" price 19.99 name "Designer Chair" description "A comfortable designer chair" manufacturer SeatStyle itemType chair productImg chair-004.jpg
+SADD store:all-products Item-4
+
+HMSET store:products:Item-5 artist "Eve Taylor" price 9.99 name "Modern Cup" description "A sleek and modern cup for beverages" manufacturer CupMaster itemType cup productImg cup-005.jpg
+SADD store:all-products Item-5
+EXEC
+
+# Sort items by price and retrieve name and price
+SORT store:all-products BY store:products:*->price GET store:products:*->name GET store:products:*->price
