@@ -1,20 +1,111 @@
-# Start a transaction
-MULTI
-HMSET store:products:Item-1 artist "Alice Brown" price 15.99 name "Elegant Vase" description "A beautiful vase for home decor" manufacturer HomeDeco itemType vase productImg vase-001.jpg
-SADD store:all-products Item-1
+import { Injectable } from '@nestjs/common';
+import { RedisService } from '@nestjs-modules/ioredis';
+import { Redis } from 'ioredis';
 
-HMSET store:products:Item-2 artist "Bob Smith" price 12.49 name "Stylish Lamp" description "A modern lamp to brighten your space" manufacturer LightHouse itemType lamp productImg lamp-002.jpg
-SADD store:all-products Item-2
+@Injectable()
+export class RedisServiceClass {
+  private readonly redis: Redis;
 
-HMSET store:products:Item-3 artist "Clara Johnson" price 8.99 name "Classic Plate" description "A timeless ceramic plate" manufacturer DishWorks itemType plate productImg plate-003.jpg
-SADD store:all-products Item-3
+  constructor(private readonly redisService: RedisService) {
+    this.redis = this.redisService.getClient();
+  }
 
-HMSET store:products:Item-4 artist "David Lee" price 19.99 name "Designer Chair" description "A comfortable designer chair" manufacturer SeatStyle itemType chair productImg chair-004.jpg
-SADD store:all-products Item-4
+  // Add an item with its details
+  async addItem(itemKey: string, itemData: Record<string, any>, priceIndex: string, price: number) {
+    const pipeline = this.redis.multi();
+    pipeline.hmset(itemKey, itemData);
+    pipeline.sadd('redishop:all-items', itemKey.split(':')[2]);
+    pipeline.zadd(priceIndex, price, itemKey.split(':')[2]);
+    await pipeline.exec();
+  }
 
-HMSET store:products:Item-5 artist "Eve Taylor" price 9.99 name "Modern Cup" description "A sleek and modern cup for beverages" manufacturer CupMaster itemType cup productImg cup-005.jpg
-SADD store:all-products Item-5
-EXEC
+  // Sort items by price and return required fields
+  async sortItems(byKeyPattern: string, getField: string[], options: { limit?: [number, number]; desc?: boolean } = {}) {
+    let command = this.redis.sort('redishop:all-items', 'BY', byKeyPattern);
+    getField.forEach((field) => command = command.get(field));
+    
+    if (options.limit) {
+      command = command.limit(options.limit[0], options.limit[1]);
+    }
 
-# Sort items by price and retrieve name and price
-SORT store:all-products BY store:products:*->price GET store:products:*->name GET store:products:*->price
+    if (options.desc) {
+      command = command.desc();
+    }
+
+    return await command.exec();
+  }
+
+  // Fetch items within a price range
+  async getItemsByPriceRange(priceIndex: string, min: number, max: number) {
+    return await this.redis.zrangebyscore(priceIndex, min, max, 'WITHSCORES');
+  }
+
+  // Filter and fetch items using a temporary sorted set
+  async filterAndFetchItems(priceIndex: string, min: number, max: number, byKeyPattern: string, getField: string[]) {
+    const tempKey = 'temp';
+    await this.redis.zunionstore(tempKey, 1, priceIndex);
+    await this.redis.zremrangebyscore(tempKey, '-inf', min);
+    await this.redis.zremrangebyscore(tempKey, max, '+inf');
+    const results = await this.redis.sort(tempKey, 'BY', byKeyPattern, ...getField.flatMap((field) => ['GET', field]));
+    await this.redis.del(tempKey);
+    return results;
+  }
+
+  // Advanced filtering using transactions
+  async advancedFilterAndFetch(priceIndex: string, min: number, max: number, byKeyPattern: string, getField: string[]) {
+    const tempKey = 'temp';
+    const pipeline = this.redis.multi();
+    pipeline.zunionstore(tempKey, 1, priceIndex);
+    pipeline.zremrangebyscore(tempKey, '-inf', min);
+    pipeline.zremrangebyscore(tempKey, max, '+inf');
+    pipeline.sort(tempKey, 'BY', byKeyPattern, ...getField.flatMap((field) => ['GET', field]));
+    pipeline.del(tempKey);
+    const results = await pipeline.exec();
+    return results[3][1]; // The sorted result is the fourth command in the pipeline
+  }
+}
+
+
+_--------
+
+import { Controller, Get } from '@nestjs/common';
+
+@Controller('redis')
+export class RedisController {
+  constructor(private readonly redisServiceClass: RedisServiceClass) {}
+
+  @Get('test')
+  async test() {
+    // Add an item
+    await this.redisServiceClass.addItem(
+      'redishop:items:Handcrafted-Trees-Mug',
+      {
+        artist: 'Martin Wessely',
+        price: 10.99,
+        name: 'Handcrafted Trees Mug',
+        description: 'enim corporis voluptatibus...',
+        manufacturer: 'OHara-Group',
+        itemType: 'mug',
+        productImg: 'mug-400_002e1ecb8bd2.jpg',
+      },
+      'redishop:priceIndex',
+      10.99,
+    );
+
+    // Sort items
+    const sortedItems = await this.redisServiceClass.sortItems(
+      'redishop:items:*->price',
+      ['redishop:items:*->name', 'redishop:items:*->price'],
+      { limit: [0, 5] },
+    );
+
+    // Get items by price range
+    const itemsByPrice = await this.redisServiceClass.getItemsByPriceRange(
+      'redishop:priceIndex',
+      10,
+      20,
+    );
+
+    return { sortedItems, itemsByPrice };
+  }
+}
