@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+iiimport { Injectable } from '@nestjs/common';
 import { RedisService } from '@nestjs-modules/ioredis';
 import { Redis } from 'ioredis';
 
@@ -109,3 +109,244 @@ export class RedisController {
     return { sortedItems, itemsByPrice };
   }
 }
+
+
+-----
+
+Here’s an enhanced version of the NestJS Redis service class with additional utilities like add, set, get, and filter for handling Redis operations.
+
+
+---
+
+Enhanced Service Class
+
+import { Injectable } from '@nestjs/common';
+import { RedisService } from '@nestjs-modules/ioredis';
+import { Redis } from 'ioredis';
+
+@Injectable()
+export class RedisServiceClass {
+  private readonly redis: Redis;
+
+  constructor(private readonly redisService: RedisService) {
+    this.redis = this.redisService.getClient();
+  }
+
+  // Add a single key-value pair
+  async add(key: string, value: string): Promise<string> {
+    return await this.redis.set(key, value);
+  }
+
+  // Add multiple fields to a hash
+  async setHash(key: string, fields: Record<string, any>): Promise<string> {
+    return await this.redis.hmset(key, fields);
+  }
+
+  // Get all fields from a hash
+  async getHash(key: string): Promise<Record<string, string>> {
+    return await this.redis.hgetall(key);
+  }
+
+  // Add multiple items to a set
+  async addToSet(key: string, items: string[]): Promise<number> {
+    return await this.redis.sadd(key, ...items);
+  }
+
+  // Get all members from a set
+  async getSetMembers(key: string): Promise<string[]> {
+    return await this.redis.smembers(key);
+  }
+
+  // Add multiple items to a sorted set
+  async addToSortedSet(key: string, items: { score: number; value: string }[]): Promise<number> {
+    const flattened = items.flatMap((item) => [item.score, item.value]);
+    return await this.redis.zadd(key, ...flattened);
+  }
+
+  // Get items within a score range from a sorted set
+  async getSortedSetRange(key: string, min: number, max: number): Promise<string[]> {
+    return await this.redis.zrangebyscore(key, min, max, 'WITHSCORES');
+  }
+
+  // Filter items in a sorted set using temporary keys
+  async filterSortedSet(key: string, min: number, max: number): Promise<string[]> {
+    const tempKey = 'temp';
+    await this.redis.zunionstore(tempKey, 1, key);
+    await this.redis.zremrangebyscore(tempKey, '-inf', min);
+    await this.redis.zremrangebyscore(tempKey, max, '+inf');
+    const result = await this.redis.zrange(tempKey, 0, -1, 'WITHSCORES');
+    await this.redis.del(tempKey);
+    return result;
+  }
+
+  // Sort items and retrieve specified fields
+  async sortItems(key: string, byPattern: string, fields: string[], options?: { limit?: [number, number]; desc?: boolean }): Promise<string[]> {
+    let command = this.redis.sort(key, 'BY', byPattern);
+    fields.forEach((field) => {
+      command = command.get(field);
+    });
+
+    if (options?.limit) {
+      command = command.limit(options.limit[0], options.limit[1]);
+    }
+
+    if (options?.desc) {
+      command = command.desc();
+    }
+
+    return await command.exec();
+  }
+
+  // Delete a key
+  async deleteKey(key: string): Promise<number> {
+    return await this.redis.del(key);
+  }
+
+  // Get a value by key
+  async get(key: string): Promise<string | null> {
+    return await this.redis.get(key);
+  }
+
+  // Increment a key's value
+  async increment(key: string): Promise<number> {
+    return await this.redis.incr(key);
+  }
+
+  // Decrement a key's value
+  async decrement(key: string): Promise<number> {
+    return await this.redis.decr(key);
+  }
+}
+
+
+---
+
+Utility Methods
+
+1. Basic Operations
+
+add: Adds a single key-value pair.
+
+get: Retrieves a single key's value.
+
+deleteKey: Deletes a key.
+
+increment/decrement: Increment or decrement the value of a key.
+
+
+2. Hash Operations
+
+setHash: Adds multiple fields to a hash.
+
+getHash: Retrieves all fields from a hash.
+
+
+3. Set Operations
+
+addToSet: Adds multiple items to a set.
+
+getSetMembers: Retrieves all members of a set.
+
+
+4. Sorted Set Operations
+
+addToSortedSet: Adds multiple items to a sorted set with scores.
+
+getSortedSetRange: Retrieves items within a specific score range.
+
+
+5. Filtering
+
+filterSortedSet: Filters a sorted set using score ranges with a temporary key.
+
+
+6. Sorting
+
+sortItems: Sorts items based on a pattern and retrieves specified fields.
+
+
+
+---
+
+Usage Example
+
+Here’s how you can use the utilities in a controller:
+
+import { Controller, Get } from '@nestjs/common';
+import { RedisServiceClass } from './redis.service';
+
+@Controller('redis')
+export class RedisController {
+  constructor(private readonly redisService: RedisServiceClass) {}
+
+  @Get('test')
+  async test() {
+    // Add a key-value pair
+    await this.redisService.add('store:item1', 'Item 1 description');
+
+    // Add a hash
+    await this.redisService.setHash('store:products:1', {
+      name: 'Elegant Vase',
+      price: '15.99',
+      description: 'A beautiful vase for home decor',
+    });
+
+    // Add to a set
+    await this.redisService.addToSet('store:categories', ['vase', 'lamp', 'chair']);
+
+    // Add to a sorted set
+    await this.redisService.addToSortedSet('store:priceIndex', [
+      { score: 15.99, value: 'vase' },
+      { score: 12.49, value: 'lamp' },
+    ]);
+
+    // Sort items
+    const sortedItems = await this.redisService.sortItems(
+      'store:categories',
+      'store:products:*->price',
+      ['store:products:*->name', 'store:products:*->price'],
+    );
+
+    // Filter sorted set
+    const filteredItems = await this.redisService.filterSortedSet('store:priceIndex', 10, 20);
+
+    return { sortedItems, filteredItems };
+  }
+}
+
+
+---
+
+How to Use
+
+1. Install Redis and @nestjs-modules/ioredis:
+
+npm install @nestjs-modules/ioredis ioredis
+
+
+2. Configure the Redis module in your app.module.ts:
+
+import { Module } from '@nestjs/common';
+import { RedisModule } from '@nestjs-modules/ioredis';
+import { RedisController } from './redis.controller';
+import { RedisServiceClass } from './redis.service';
+
+@Module({
+  imports: [
+    RedisModule.forRoot({
+      config: {
+        host: 'localhost',
+        port: 6379,
+      },
+    }),
+  ],
+  controllers: [RedisController],
+  providers: [RedisServiceClass],
+})
+export class AppModule {}
+
+
+
+This setup provides a comprehensive Redis service to handle all your use cases effectively.
+
+
