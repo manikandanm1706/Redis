@@ -1,0 +1,153 @@
+To dynamically access metadata from a utility function that is called inside the hooks, we need to pass the controller class reference to the utility function. Here's how to implement this:
+
+
+---
+
+Step-by-Step Implementation
+
+1. Create the Metadata Decorator
+
+The ControllerMetadata decorator attaches metadata to the controller.
+
+import { SetMetadata } from '@nestjs/common';
+
+export const ControllerMetadata = (key: string, value: any) => SetMetadata(key, value);
+
+
+---
+
+2. Apply the Metadata Decorator in the Controller
+
+Use the ControllerMetadata decorator to attach metadata to the ProductController.
+
+import { Controller, Get } from '@nestjs/common';
+import { ProductService } from './product.service';
+import { ControllerMetadata } from './decorators/controller-metadata.decorator';
+
+@ControllerMetadata('customMetaKey', { feature: 'product-management', version: '1.0' })
+@Controller('products')
+export class ProductController {
+  constructor(private readonly productService: ProductService) {}
+
+  @Get()
+  findAll() {
+    return this.productService.findAll();
+  }
+}
+
+
+---
+
+3. Define the Utility Function
+
+The ProductUtility function fetches metadata dynamically using the Reflector.
+
+import { Reflector } from '@nestjs/core';
+
+export class ProductUtility {
+  private static reflector = new Reflector();
+
+  static getControllerMetadata(controller: any, key: string): any {
+    const metadata = this.reflector.get(key, controller.constructor);
+    console.log('Fetched Metadata:', metadata);
+    return metadata;
+  }
+}
+
+
+---
+
+4. Update the Product Model with the Hook
+
+Call the utility function within the afterUpdate hook and pass the controller reference.
+
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  AfterUpdate,
+} from 'sequelize-typescript';
+import { ProductUtility } from '../utils/product-utility';
+import { ProductController } from '../product.controller';
+
+@Table({ tableName: 'products' })
+export class Product extends Model<Product> {
+  @Column({
+    type: DataType.STRING,
+    allowNull: false,
+  })
+  name: string;
+
+  @Column({
+    type: DataType.FLOAT,
+    allowNull: false,
+  })
+  price: number;
+
+  @AfterUpdate
+  static async logUpdate(instance: Product) {
+    console.log(`Product with ID ${instance.id} was updated`);
+
+    // Fetch metadata dynamically using the utility function
+    const metadata = ProductUtility.getControllerMetadata(ProductController, 'customMetaKey');
+    console.log('Controller Metadata from Utility Function:', metadata);
+
+    // Example usage of metadata
+    if (metadata?.feature === 'product-management') {
+      console.log('This update is part of the product-management feature');
+    }
+  }
+}
+
+
+---
+
+How It Works
+
+1. Attach Metadata: The ControllerMetadata decorator adds metadata to the ProductController.
+
+
+2. Utility Function: The ProductUtility.getControllerMetadata function retrieves metadata using the Reflector.
+
+
+3. Seamless Integration: Inside the afterUpdate hook, the ProductController reference and the metadata key (customMetaKey) are passed to the utility function to fetch metadata dynamically.
+
+
+
+
+---
+
+Example Workflow
+
+1. Update a Product: Use the PUT /products/:id endpoint to update a product.
+
+Example request:
+
+{
+  "name": "Updated Product",
+  "price": 199.99
+}
+
+
+2. Logs: When the afterUpdate hook is triggered, the utility function retrieves metadata and logs it.
+
+Product with ID 1 was updated
+Fetched Metadata: { feature: 'product-management', version: '1.0' }
+Controller Metadata from Utility Function: { feature: 'product-management', version: '1.0' }
+This update is part of the product-management feature
+
+
+
+
+---
+
+Key Notes
+
+Passing Controller Reference: The ProductController is directly referenced in the model. If this seems tightly coupled, you can pass it dynamically when initializing the hook.
+
+Flexibility: The utility function can fetch metadata for any controller or provider if passed correctly.
+
+
+Let me know if further clarification or enhancements are needed!
+
