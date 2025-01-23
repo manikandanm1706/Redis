@@ -1,352 +1,52 @@
-iiimport { Injectable } from '@nestjs/common';
-import { RedisService } from '@nestjs-modules/ioredis';
-import { Redis } from 'ioredis';
+import { Reflector } from '@nestjs/core';
 
-@Injectable()
-export class RedisServiceClass {
-  private readonly redis: Redis;
+export class MetaUtility {
+  private static reflector = new Reflector();
 
-  constructor(private readonly redisService: RedisService) {
-    this.redis = this.redisService.getClient();
-  }
-
-  // Add an item with its details
-  async addItem(itemKey: string, itemData: Record<string, any>, priceIndex: string, price: number) {
-    const pipeline = this.redis.multi();
-    pipeline.hmset(itemKey, itemData);
-    pipeline.sadd('redishop:all-items', itemKey.split(':')[2]);
-    pipeline.zadd(priceIndex, price, itemKey.split(':')[2]);
-    await pipeline.exec();
-  }
-
-  // Sort items by price and return required fields
-  async sortItems(byKeyPattern: string, getField: string[], options: { limit?: [number, number]; desc?: boolean } = {}) {
-    let command = this.redis.sort('redishop:all-items', 'BY', byKeyPattern);
-    getField.forEach((field) => command = command.get(field));
-    
-    if (options.limit) {
-      command = command.limit(options.limit[0], options.limit[1]);
-    }
-
-    if (options.desc) {
-      command = command.desc();
-    }
-
-    return await command.exec();
-  }
-
-  // Fetch items within a price range
-  async getItemsByPriceRange(priceIndex: string, min: number, max: number) {
-    return await this.redis.zrangebyscore(priceIndex, min, max, 'WITHSCORES');
-  }
-
-  // Filter and fetch items using a temporary sorted set
-  async filterAndFetchItems(priceIndex: string, min: number, max: number, byKeyPattern: string, getField: string[]) {
-    const tempKey = 'temp';
-    await this.redis.zunionstore(tempKey, 1, priceIndex);
-    await this.redis.zremrangebyscore(tempKey, '-inf', min);
-    await this.redis.zremrangebyscore(tempKey, max, '+inf');
-    const results = await this.redis.sort(tempKey, 'BY', byKeyPattern, ...getField.flatMap((field) => ['GET', field]));
-    await this.redis.del(tempKey);
-    return results;
-  }
-
-  // Advanced filtering using transactions
-  async advancedFilterAndFetch(priceIndex: string, min: number, max: number, byKeyPattern: string, getField: string[]) {
-    const tempKey = 'temp';
-    const pipeline = this.redis.multi();
-    pipeline.zunionstore(tempKey, 1, priceIndex);
-    pipeline.zremrangebyscore(tempKey, '-inf', min);
-    pipeline.zremrangebyscore(tempKey, max, '+inf');
-    pipeline.sort(tempKey, 'BY', byKeyPattern, ...getField.flatMap((field) => ['GET', field]));
-    pipeline.del(tempKey);
-    const results = await pipeline.exec();
-    return results[3][1]; // The sorted result is the fourth command in the pipeline
+  static getMethodMetadata(controller: any, methodName: string, key: string): any {
+    const metadata = this.reflector.get(key, controller[methodName]);
+    console.log(`Metadata for method ${methodName}:`, metadata);
+    return metadata;
   }
 }
 
+___
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  AfterUpdate,
+} from 'sequelize-typescript';
+import { MetaUtility } from '../utils/meta-utility';
+import { ProductController } from '../product.controller';
 
-_--------
+@Table({ tableName: 'products' })
+export class Product extends Model<Product> {
+  @Column({
+    type: DataType.STRING,
+    allowNull: false,
+  })
+  name: string;
 
-import { Controller, Get } from '@nestjs/common';
+  @Column({
+    type: DataType.FLOAT,
+    allowNull: false,
+  })
+  price: number;
 
-@Controller('redis')
-export class RedisController {
-  constructor(private readonly redisServiceClass: RedisServiceClass) {}
+  @AfterUpdate
+  static async logUpdate(instance: Product) {
+    console.log(`Product with ID ${instance.id} was updated`);
 
-  @Get('test')
-  async test() {
-    // Add an item
-    await this.redisServiceClass.addItem(
-      'redishop:items:Handcrafted-Trees-Mug',
-      {
-        artist: 'Martin Wessely',
-        price: 10.99,
-        name: 'Handcrafted Trees Mug',
-        description: 'enim corporis voluptatibus...',
-        manufacturer: 'OHara-Group',
-        itemType: 'mug',
-        productImg: 'mug-400_002e1ecb8bd2.jpg',
-      },
-      'redishop:priceIndex',
-      10.99,
-    );
+    // Fetch metadata for the 'findAll' method dynamically
+    const metadata = MetaUtility.getMethodMetadata(ProductController.prototype, 'findAll', 'customMetaKey');
+    console.log('Method Metadata from Utility Function:', metadata);
 
-    // Sort items
-    const sortedItems = await this.redisServiceClass.sortItems(
-      'redishop:items:*->price',
-      ['redishop:items:*->name', 'redishop:items:*->price'],
-      { limit: [0, 5] },
-    );
-
-    // Get items by price range
-    const itemsByPrice = await this.redisServiceClass.getItemsByPriceRange(
-      'redishop:priceIndex',
-      10,
-      20,
-    );
-
-    return { sortedItems, itemsByPrice };
-  }
-}
-
-
------
-
-Here’s an enhanced version of the NestJS Redis service class with additional utilities like add, set, get, and filter for handling Redis operations.
-
-
----
-
-Enhanced Service Class
-
-import { Injectable } from '@nestjs/common';
-import { RedisService } from '@nestjs-modules/ioredis';
-import { Redis } from 'ioredis';
-
-@Injectable()
-export class RedisServiceClass {
-  private readonly redis: Redis;
-
-  constructor(private readonly redisService: RedisService) {
-    this.redis = this.redisService.getClient();
-  }
-
-  // Add a single key-value pair
-  async add(key: string, value: string): Promise<string> {
-    return await this.redis.set(key, value);
-  }
-
-  // Add multiple fields to a hash
-  async setHash(key: string, fields: Record<string, any>): Promise<string> {
-    return await this.redis.hmset(key, fields);
-  }
-
-  // Get all fields from a hash
-  async getHash(key: string): Promise<Record<string, string>> {
-    return await this.redis.hgetall(key);
-  }
-
-  // Add multiple items to a set
-  async addToSet(key: string, items: string[]): Promise<number> {
-    return await this.redis.sadd(key, ...items);
-  }
-
-  // Get all members from a set
-  async getSetMembers(key: string): Promise<string[]> {
-    return await this.redis.smembers(key);
-  }
-
-  // Add multiple items to a sorted set
-  async addToSortedSet(key: string, items: { score: number; value: string }[]): Promise<number> {
-    const flattened = items.flatMap((item) => [item.score, item.value]);
-    return await this.redis.zadd(key, ...flattened);
-  }
-
-  // Get items within a score range from a sorted set
-  async getSortedSetRange(key: string, min: number, max: number): Promise<string[]> {
-    return await this.redis.zrangebyscore(key, min, max, 'WITHSCORES');
-  }
-
-  // Filter items in a sorted set using temporary keys
-  async filterSortedSet(key: string, min: number, max: number): Promise<string[]> {
-    const tempKey = 'temp';
-    await this.redis.zunionstore(tempKey, 1, key);
-    await this.redis.zremrangebyscore(tempKey, '-inf', min);
-    await this.redis.zremrangebyscore(tempKey, max, '+inf');
-    const result = await this.redis.zrange(tempKey, 0, -1, 'WITHSCORES');
-    await this.redis.del(tempKey);
-    return result;
-  }
-
-  // Sort items and retrieve specified fields
-  async sortItems(key: string, byPattern: string, fields: string[], options?: { limit?: [number, number]; desc?: boolean }): Promise<string[]> {
-    let command = this.redis.sort(key, 'BY', byPattern);
-    fields.forEach((field) => {
-      command = command.get(field);
-    });
-
-    if (options?.limit) {
-      command = command.limit(options.limit[0], options.limit[1]);
+    if (metadata?.operation === 'fetch-all-products') {
+      console.log('This update is related to the fetch-all-products operation');
     }
-
-    if (options?.desc) {
-      command = command.desc();
-    }
-
-    return await command.exec();
-  }
-
-  // Delete a key
-  async deleteKey(key: string): Promise<number> {
-    return await this.redis.del(key);
-  }
-
-  // Get a value by key
-  async get(key: string): Promise<string | null> {
-    return await this.redis.get(key);
-  }
-
-  // Increment a key's value
-  async increment(key: string): Promise<number> {
-    return await this.redis.incr(key);
-  }
-
-  // Decrement a key's value
-  async decrement(key: string): Promise<number> {
-    return await this.redis.decr(key);
   }
 }
 
-
----
-
-Utility Methods
-
-1. Basic Operations
-
-add: Adds a single key-value pair.
-
-get: Retrieves a single key's value.
-
-deleteKey: Deletes a key.
-
-increment/decrement: Increment or decrement the value of a key.
-
-
-2. Hash Operations
-
-setHash: Adds multiple fields to a hash.
-
-getHash: Retrieves all fields from a hash.
-
-
-3. Set Operations
-
-addToSet: Adds multiple items to a set.
-
-getSetMembers: Retrieves all members of a set.
-
-
-4. Sorted Set Operations
-
-addToSortedSet: Adds multiple items to a sorted set with scores.
-
-getSortedSetRange: Retrieves items within a specific score range.
-
-
-5. Filtering
-
-filterSortedSet: Filters a sorted set using score ranges with a temporary key.
-
-
-6. Sorting
-
-sortItems: Sorts items based on a pattern and retrieves specified fields.
-
-
-
----
-
-Usage Example
-
-Here’s how you can use the utilities in a controller:
-
-import { Controller, Get } from '@nestjs/common';
-import { RedisServiceClass } from './redis.service';
-
-@Controller('redis')
-export class RedisController {
-  constructor(private readonly redisService: RedisServiceClass) {}
-
-  @Get('test')
-  async test() {
-    // Add a key-value pair
-    await this.redisService.add('store:item1', 'Item 1 description');
-
-    // Add a hash
-    await this.redisService.setHash('store:products:1', {
-      name: 'Elegant Vase',
-      price: '15.99',
-      description: 'A beautiful vase for home decor',
-    });
-
-    // Add to a set
-    await this.redisService.addToSet('store:categories', ['vase', 'lamp', 'chair']);
-
-    // Add to a sorted set
-    await this.redisService.addToSortedSet('store:priceIndex', [
-      { score: 15.99, value: 'vase' },
-      { score: 12.49, value: 'lamp' },
-    ]);
-
-    // Sort items
-    const sortedItems = await this.redisService.sortItems(
-      'store:categories',
-      'store:products:*->price',
-      ['store:products:*->name', 'store:products:*->price'],
-    );
-
-    // Filter sorted set
-    const filteredItems = await this.redisService.filterSortedSet('store:priceIndex', 10, 20);
-
-    return { sortedItems, filteredItems };
-  }
-}
-
-
----
-
-How to Use
-
-1. Install Redis and @nestjs-modules/ioredis:
-
-npm install @nestjs-modules/ioredis ioredis
-
-
-2. Configure the Redis module in your app.module.ts:
-
-import { Module } from '@nestjs/common';
-import { RedisModule } from '@nestjs-modules/ioredis';
-import { RedisController } from './redis.controller';
-import { RedisServiceClass } from './redis.service';
-
-@Module({
-  imports: [
-    RedisModule.forRoot({
-      config: {
-        host: 'localhost',
-        port: 6379,
-      },
-    }),
-  ],
-  controllers: [RedisController],
-  providers: [RedisServiceClass],
-})
-export class AppModule {}
-
-
-
-This setup provides a comprehensive Redis service to handle all your use cases effectively.
-
-
+____
