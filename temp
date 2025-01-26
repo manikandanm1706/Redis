@@ -1,52 +1,136 @@
+The error "cannot resolve dependency" occurs because NestJS is unable to correctly inject dependencies or access the required information at runtime. Specifically, in your case, the issue is due to accessing metadata using ProductController.prototype outside the appropriate context.
+
+
+---
+
+Root Cause:
+
+The ProductController.prototype refers to the class definition, but NestJS metadata is managed by its dependency injection system and is applied at runtime to the instantiated controller, not its prototype.
+
+To fix this, you need to:
+
+1. Use NestJS's Reflector to access the metadata.
+
+
+2. Inject the Reflector into your utility or repository to retrieve the metadata dynamically.
+
+
+
+
+---
+
+Fix: Correct Access to Metadata
+
+Step 1: Update the Utility Function to Inject Reflector
+
+Instead of using Reflector statically, inject it into your utility class or service. Here's how:
+
+import { Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
+@Injectable()
 export class MetaUtility {
-  private static reflector = new Reflector();
+  constructor(private readonly reflector: Reflector) {}
 
-  static getMethodMetadata(controller: any, methodName: string, key: string): any {
-    const metadata = this.reflector.get(key, controller[methodName]);
+  getMethodMetadata(controller: any, methodName: string, key: string): any {
+    const method = controller[methodName];
+    const metadata = this.reflector.get(key, method);
     console.log(`Metadata for method ${methodName}:`, metadata);
     return metadata;
   }
 }
 
-___
-import {
-  Table,
-  Column,
-  Model,
-  DataType,
-  AfterUpdate,
-} from 'sequelize-typescript';
-import { MetaUtility } from '../utils/meta-utility';
-import { ProductController } from '../product.controller';
 
-@Table({ tableName: 'products' })
-export class Product extends Model<Product> {
-  @Column({
-    type: DataType.STRING,
-    allowNull: false,
-  })
-  name: string;
+---
 
-  @Column({
-    type: DataType.FLOAT,
-    allowNull: false,
-  })
-  price: number;
+Step 2: Inject the Utility Class in Your Repository
 
-  @AfterUpdate
-  static async logUpdate(instance: Product) {
-    console.log(`Product with ID ${instance.id} was updated`);
+Now, inject the MetaUtility into your repository to fetch metadata.
 
-    // Fetch metadata for the 'findAll' method dynamically
-    const metadata = MetaUtility.getMethodMetadata(ProductController.prototype, 'findAll', 'customMetaKey');
-    console.log('Method Metadata from Utility Function:', metadata);
+import { Injectable } from '@nestjs/common';
+import { MetaUtility } from './utils/meta-utility';
 
-    if (metadata?.operation === 'fetch-all-products') {
-      console.log('This update is related to the fetch-all-products operation');
-    }
+@Injectable()
+export class ProductRepository {
+  constructor(private readonly metaUtility: MetaUtility) {}
+
+  findAll(controller: any) {
+    // Use MetaUtility to get metadata dynamically
+    const metadata = this.metaUtility.getMethodMetadata(controller, 'findAll', 'customMetaKey');
+    console.log('Controller Method Metadata in Repository:', metadata);
+
+    return []; // Example return value
   }
 }
 
-____
+
+---
+
+Step 3: Ensure Proper Injection of Dependencies
+
+Update your ProductModule to ensure all services and utilities are registered properly.
+
+import { Module } from '@nestjs/common';
+import { ProductController } from './product.controller';
+import { ProductService } from './product.service';
+import { ProductRepository } from './product.repository';
+import { MetaUtility } from './utils/meta-utility';
+
+@Module({
+  controllers: [ProductController],
+  providers: [ProductService, ProductRepository, MetaUtility],
+})
+export class ProductModule {}
+
+
+---
+
+Step 4: Call findAll in the Controller
+
+In the controller, pass the controller instance (this) when calling the service and repository.
+
+import { Controller, Get } from '@nestjs/common';
+import { ProductService } from './product.service';
+
+@Controller('products')
+export class ProductController {
+  constructor(private readonly productService: ProductService) {}
+
+  @Get()
+  findAll() {
+    return this.productService.findAll(this); // Pass controller instance
+  }
+}
+
+
+---
+
+Explanation of Changes
+
+1. Injected Reflector into Utility: The Reflector is now injected into the MetaUtility class, ensuring it can access metadata dynamically at runtime.
+
+
+2. Passed Controller Instance: Passing this (the controller instance) ensures the utility function can fetch metadata for the correct method.
+
+
+3. Registered Dependencies: The MetaUtility class is registered as a provider in the ProductModule to ensure proper dependency injection.
+
+
+
+
+---
+
+Testing the Fix
+
+1. Make a GET /products request.
+
+
+2. Logs in the repository should display metadata fetched dynamically for the findAll method:
+
+Metadata for method findAll: { operation: 'fetch-all-products', version: '1.0' }
+Controller Method Metadata in Repository: { operation: 'fetch-all-products', version: '1.0' }
+
+
+
+Let me know if you encounter further issues!
+
