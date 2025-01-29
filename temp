@@ -1367,3 +1367,262 @@ This should allow you to generate queries that handle complex filtering and sort
 
 Let me know if you need further adjustments!
 
+
+Here's the updated implementation to handle multi-level payloads recursively.
+
+
+---
+
+Updated Payload Example
+
+The payload supports nested AND/OR logic with multiple levels:
+
+const payload = {
+    logicOperator: 'AND', // Top-level operator
+    conditions: [
+        {
+            logicOperator: 'OR',
+            conditions: [
+                { column: 'age', operator: '>', value: 25 },
+                { column: 'departmentName', operator: '=', value: 'Engineering' }
+            ]
+        },
+        { column: 'salary', operator: '>=', value: 50000 }
+    ],
+    sort: [
+        { fieldName: 'name', orderBy: 'ASC' },
+        { fieldName: 'id', orderBy: 'DESC' }
+    ]
+};
+
+
+---
+
+Consolidated Recursive Code
+
+1. Main Query Builder
+
+export const buildSortFilterQuery = async (payload: any, query: any = {}) => {
+    query = {
+        attributes: undefined,
+        include: [],
+        where: {},
+        order: [],
+    };
+
+    try {
+        // Apply filtering logic
+        query = await filterMethod(query, payload);
+
+        // Apply sorting logic
+        query = await sortMethod(query, payload);
+
+        console.log(JSON.stringify(query), "Final Query");
+        return query;
+    } catch (error) {
+        console.error("Error building query:", error);
+        throw error;
+    }
+};
+
+
+---
+
+2. Filter Method (Recursive)
+
+export const filterMethod = async (query: any, payload: any) => {
+    const { logicOperator = 'AND', conditions = [], options: { columnMapping } = {} } = payload;
+    let { where = {}, include = [] } = query;
+
+    const whereClauses = [];
+
+    for (const condition of conditions) {
+        if (condition.conditions) {
+            // If nested conditions exist, process them recursively
+            const nestedQuery = await filterMethod({ where: {}, include }, condition);
+            whereClauses.push({ [Op[condition.logicOperator.toLowerCase()]]: nestedQuery.where });
+            include = [...include, ...nestedQuery.include];
+        } else {
+            // Process single-level conditions
+            const { column, operator, value, from, to } = condition;
+            const columnConfig = columnMapping[column];
+
+            if (!columnConfig) {
+                throw new Error(`Invalid column: ${column}`);
+            }
+
+            const { isBaseModel, model, as } = columnConfig;
+            const fullyQualifiedColumn = `${as}.${columnConfig.column}`;
+            const whereClause = getWhereObject({ fieldName: fullyQualifiedColumn, operator, value, from, to });
+
+            if (isBaseModel) {
+                whereClauses.push(whereClause);
+            } else {
+                let includeItem = include.find((item) => item.model === model);
+                if (!includeItem) {
+                    include.push({ model, as, where: whereClause });
+                } else {
+                    includeItem.where = { ...includeItem.where, ...whereClause };
+                }
+            }
+        }
+    }
+
+    // Combine all conditions using the provided logic operator
+    where = { [Op[logicOperator.toLowerCase()]]: whereClauses };
+
+    query.where = where;
+    query.include = include;
+
+    return query;
+};
+
+
+---
+
+3. Sort Method
+
+export const sortMethod = async (query: any, payload: any) => {
+    const { sort = [], options: { columnMapping } = {} } = payload;
+    let { include = [], order = [] } = query;
+
+    for (const { fieldName, orderBy } of sort) {
+        const fieldConfig = columnMapping[fieldName];
+
+        if (!fieldConfig) {
+            throw new Error(`Invalid sort column: ${fieldName}`);
+        }
+
+        order.push([col(`${fieldConfig.as}.${fieldConfig.column}`), orderBy]);
+
+        if (!fieldConfig.isBaseModel) {
+            const exists = include.some((item) => item.model === fieldConfig.model);
+            if (!exists) {
+                include.push({
+                    model: fieldConfig.model,
+                    as: fieldConfig.as,
+                });
+            }
+        }
+    }
+
+    query.include = include;
+    query.order = order;
+
+    return query;
+};
+
+
+---
+
+4. Utility: Get Qualified Name
+
+export const getQualifiedName = (operator: string, mapping: any) => {
+    const { column, qualifiedName } = mapping;
+    return qualifiedName || column;
+};
+
+
+---
+
+5. Utility: Get Where Object
+
+export const getWhereObject = (input: any) => {
+    const { fieldName, operator, value = "", from = "", to = "" } = input;
+
+    const operators = {
+        equals: () => ({ [fieldName]: value }),
+        notEquals: () => ({ [fieldName]: { [Op.not]: value } }),
+        contains: () => ({ [fieldName]: { [Op.iLike]: `%${value}%` } }),
+        notContains: () => ({ [fieldName]: { [Op.notILike]: `%${value}%` } }),
+        startsWith: () => ({ [fieldName]: { [Op.iLike]: `${value}%` } }),
+        endsWith: () => ({ [fieldName]: { [Op.iLike]: `%${value}` } }),
+        between: () => ({ [fieldName]: { [Op.between]: [from, to] } }),
+        greaterThan: () => ({ [fieldName]: { [Op.gt]: value } }),
+        lessThan: () => ({ [fieldName]: { [Op.lt]: value } }),
+    };
+
+    return operators[operator] ? operators[operator]() : {};
+};
+
+
+---
+
+How It Works
+
+1. Recursive Filtering:
+
+The filterMethod checks if the conditions array has nested conditions.
+
+If a condition has its own logicOperator and conditions, the method calls itself recursively.
+
+This allows handling multi-level AND/OR conditions.
+
+
+
+2. Sequelize Operators:
+
+Sequelize's Op.and and Op.or are used to combine conditions dynamically.
+
+
+
+3. Sorting:
+
+Relational column sorting is handled by dynamically adding the required model to the include array.
+
+
+
+
+
+---
+
+Example Output Query
+
+For the payload:
+
+const payload = {
+    logicOperator: 'AND',
+    conditions: [
+        {
+            logicOperator: 'OR',
+            conditions: [
+                { column: 'age', operator: '>', value: 25 },
+                { column: 'departmentName', operator: '=', value: 'Engineering' }
+            ]
+        },
+        { column: 'salary', operator: '>=', value: 50000 }
+    ],
+    sort: [
+        { fieldName: 'name', orderBy: 'ASC' },
+        { fieldName: 'id', orderBy: 'DESC' }
+    ]
+};
+
+The final Sequelize query will look like:
+
+{
+    "where": {
+        "$and": [
+            {
+                "$or": [
+                    { "age": { "$gt": 25 } },
+                    { "Department.name": { "$eq": "Engineering" } }
+                ]
+            },
+            { "salary": { "$gte": 50000 } }
+        ]
+    },
+    "include": [
+        { "model": "Department", "as": "Department" }
+    ],
+    "order": [
+        ["RefCostBookTechnology.Name", "ASC"],
+        ["RefCostBookTechnology.ID", "DESC"]
+    ]
+}
+
+
+---
+
+Let me know if you face any issues or need additional modifications!
+
